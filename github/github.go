@@ -1026,14 +1026,26 @@ func (c *Client) Do(ctx context.Context, req *http.Request, v interface{}) (*Res
 	if err != nil {
 		return resp, err
 	}
-	defer resp.Body.Close()
+
+	// Create buffer to store body content
+	var bodyBytes []byte
+	if resp.Body != nil {
+		bodyBytes, err = io.ReadAll(resp.Body)
+		// Close the original body immediately after reading
+		resp.Body.Close()
+		if err != nil {
+			return resp, err
+		}
+		// Replace with our buffered reader
+		resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+	}
 
 	switch v := v.(type) {
 	case nil:
 	case io.Writer:
-		_, err = io.Copy(v, resp.Body)
+		_, err = io.Copy(v, bytes.NewBuffer(bodyBytes))
 	default:
-		decErr := json.NewDecoder(resp.Body).Decode(v)
+		decErr := json.NewDecoder(bytes.NewBuffer(bodyBytes)).Decode(v)
 		if decErr == io.EOF {
 			decErr = nil // ignore EOF errors caused by empty response body
 		}
@@ -1041,6 +1053,9 @@ func (c *Client) Do(ctx context.Context, req *http.Request, v interface{}) (*Res
 			err = decErr
 		}
 	}
+
+	// Reset body again for potential reuse
+	resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 	return resp, err
 }
 
